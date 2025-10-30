@@ -1,0 +1,11 @@
+Django>=4.2,<5.0
+psycopg2>=2.9
+channels>=4.0
+paho-mqtt>=1.6
+dlib==19.24.6
+face_recognition==1.3.0
+opencv-python>=4.7
+Pillow>=10.0
+requests>=2.31
+numpy>=1.24
+daphne>=4.0

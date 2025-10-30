@@ -1,0 +1,148 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>Welcome, {{ user.username }}</h3>
+<p>Manage your enrollment and view your recent access attempts.</p>
+<div class="mt-3">
+  <a href="/enroll/" class="btn btn-outline-primary">Enroll / Update Face</a>
+</div>
+
+<hr class="my-4" />
+
+<div class="card shadow-sm">
+  <div class="card-header bg-white">
+    <h5 class="mb-0"><i class="bi bi-camera-video me-2"></i>Shoot Page</h5>
+  </div>
+  <div class="card-body">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-6">
+        <label class="form-label"><i class="bi bi-camera me-1"></i>Camera snapshot URL</label>
+        <input id="cameraUrl" class="form-control" value="http://192.168.137.88/capture" />
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Door</label>
+        <select id="doorSelect" class="form-select">
+          {% for d in doors %}
+            <option value="{{ d.id }}">{{ d.name }}</option>
+          {% empty %}
+            <option value="" disabled selected>No doors available</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="mt-3 text-center position-relative" style="min-height:220px;">
+      <div id="cameraPlaceholder" class="text-muted position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center">
+        <i class="bi bi-camera-video" style="font-size:64px;"></i>
+        <span class="ms-2">Camera</span>
+      </div>
+      <img id="cameraFeed" src="" alt="Camera" class="img-fluid rounded border" style="max-height:340px; display:none;" />
+    </div>
+
+    <div class="d-grid gap-2 d-sm-block mt-3">
+      <button id="openDoorBtn" class="btn btn-success btn-lg px-4">Open the Door</button>
+      <span id="openResult" class="ms-3 fw-bold align-middle"></span>
+    </div>
+    <div id="openDetail" class="text-muted small mt-2"></div>
+    <div class="text-muted small mt-1">Note: You must have DoorAccess allowed=True for this door.</div>
+
+    <script>
+      function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+      }
+
+      const img = document.getElementById('cameraFeed');
+      const placeholder = document.getElementById('cameraPlaceholder');
+      const urlInput = document.getElementById('cameraUrl');
+      const openBtn = document.getElementById('openDoorBtn');
+      const resultEl = document.getElementById('openResult');
+      const detailEl = document.getElementById('openDetail');
+      const doorSelect = document.getElementById('doorSelect');
+
+      let timer = null;
+      function tick(){
+        const u = urlInput.value || '';
+        if(!u) return;
+        img.src = u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
+      }
+      img.addEventListener('load', function(){
+        if (placeholder) placeholder.style.display = 'none';
+        img.style.display = 'inline-block';
+      });
+      img.addEventListener('error', function(){
+        img.style.display = 'none';
+        if (placeholder) placeholder.style.display = 'flex';
+      });
+      openBtn.addEventListener('click', function(){
+        resultEl.textContent = '';
+        detailEl.textContent = '';
+        openBtn.disabled = true;
+        openBtn.classList.remove('btn-success');
+        openBtn.classList.add('btn-secondary');
+        openBtn.textContent = 'Verifying...';
+        tick();
+        if(timer) clearInterval(timer);
+        timer = setInterval(tick, 1000);
+        const doorId = (doorSelect && doorSelect.value ? doorSelect.value : '').toString();
+        fetch('/api/verify_open/', {
+          method: 'POST',
+          headers: {
+            'X-CSRFToken': getCookie('csrftoken'),
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({ door_id: doorId })
+        }).then(async (r)=>{
+          const txt = await r.text();
+          try{ const js = JSON.parse(txt); return {ok:true, js, raw:txt, status:r.status}; }
+          catch(e){ return {ok:false, raw:txt, status:r.status}; }
+        }).then((res)=>{
+          if(timer) { clearInterval(timer); timer = null; }
+          if(!res.ok){
+            resultEl.innerHTML = '<span class="badge bg-danger">ERROR</span>';
+            detailEl.textContent = 'HTTP '+res.status+' '+(res.raw||'');
+            resultEl.className = 'ms-3 fw-bold align-middle';
+            openBtn.disabled = false;
+            openBtn.classList.remove('btn-secondary');
+            openBtn.classList.add('btn-success');
+            openBtn.textContent = 'Open the Door';
+            return;
+          }
+          const data = res.js || {};
+          const isOpen = data.ok && data.status === 'OPEN';
+          resultEl.innerHTML = isOpen ? '<span class="badge bg-success">OPEN</span>' : '<span class="badge bg-warning text-dark">DENIED</span>';
+          resultEl.className = 'ms-3 fw-bold align-middle';
+          openBtn.disabled = false;
+          openBtn.classList.remove('btn-secondary');
+          openBtn.classList.add(isOpen ? 'btn-success' : 'btn-outline-warning');
+          openBtn.textContent = 'Open the Door';
+        }).catch((e)=>{
+          if(timer) { clearInterval(timer); timer = null; }
+          resultEl.innerHTML = '<span class="badge bg-danger">ERROR</span>';
+          resultEl.className = 'ms-3 fw-bold align-middle';
+          detailEl.textContent = e && e.message ? e.message : String(e);
+          openBtn.disabled = false;
+          openBtn.classList.remove('btn-secondary');
+          openBtn.classList.add('btn-success');
+          openBtn.textContent = 'Open the Door';
+        });
+      });
+    </script>
+</div>
+
+<h5 class="mt-4">Recent Logs</h5>
+<table class="table table-sm">
+  <thead><tr><th>Time</th><th>Door</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for log in logs %}
+    <tr>
+      <td>{{ log.timestamp }}</td>
+      <td>{{ log.door }}</td>
+      <td>{{ log.status }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="3">No logs yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

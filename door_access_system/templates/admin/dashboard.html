@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>Admin Dashboard</h3>
+<div class="row g-3">
+  <div class="col-md-4">
+    <div class="card"><div class="card-body"><h6>Total Users</h6><div class="display-6">{{ total_users }}</div></div></div>
+  </div>
+  <div class="col-md-4">
+    <div class="card"><div class="card-body"><h6>Total Doors</h6><div class="display-6">{{ total_doors }}</div></div></div>
+  </div>
+  <div class="col-md-4">
+    <div class="card"><div class="card-body"><h6>Allowed Pairs</h6><div class="display-6">{{ total_access }}</div></div></div>
+  </div>
+</div>
+<h5 class="mt-4">Recent Access Logs</h5>
+<table class="table table-striped">
+  <thead><tr><th>Time</th><th>User</th><th>Door</th><th>Status</th><th>Note</th></tr></thead>
+  <tbody>
+    {% for log in recent_logs %}
+      <tr>
+        <td>{{ log.timestamp }}</td>
+        <td>{{ log.user }}</td>
+        <td>{{ log.door }}</td>
+        <td>{{ log.status }}</td>
+        <td>{{ log.note }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="5" class="text-center">No logs yet</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
