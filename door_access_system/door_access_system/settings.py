@@ -6,7 +6,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-secret-key-change-me')
 DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
-ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# Comma-separated list in env var ALLOWED_HOSTS, or sensible defaults for local/LAN
+ALLOWED_HOSTS = os.environ.get(
+    'ALLOWED_HOSTS',
+    '127.0.0.1,localhost,192.168.110.98'
+).split(',')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -88,3 +92,18 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 LOGIN_REDIRECT_URL = 'user_dashboard'
 LOGOUT_REDIRECT_URL = 'login'
+
+# Face recognition settings
+# Smaller tolerance is stricter. Typical good values: 0.35 - 0.45
+FACE_MATCH_TOLERANCE = float(os.environ.get('FACE_MATCH_TOLERANCE', '0.38'))
+# Enforce exactly one face in frame during verification
+FACE_REQUIRE_SINGLE_FACE = os.environ.get('FACE_REQUIRE_SINGLE_FACE', '1') == '1'
+# 'hog' works on CPU; 'cnn' requires dlib CNN model and more compute
+FACE_DETECTOR_MODEL = os.environ.get('FACE_DETECTOR_MODEL', 'hog')
+# Multi-frame confirmation: capture N frames and require K matches
+FACE_MULTI_FRAME_COUNT = int(os.environ.get('FACE_MULTI_FRAME_COUNT', '3'))
+FACE_MULTI_FRAME_REQUIRED = int(os.environ.get('FACE_MULTI_FRAME_REQUIRED', '2'))
+# Delay between frames in milliseconds
+FACE_MULTI_FRAME_DELAY_MS = int(os.environ.get('FACE_MULTI_FRAME_DELAY_MS', '150'))
+
+MOTOR_ON_DURATION_SEC = float(os.environ.get('MOTOR_ON_DURATION_SEC', '2'))

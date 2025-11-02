@@ -15,8 +15,12 @@
   <div class="card-body">
     <div class="row g-3 align-items-end">
       <div class="col-md-6">
-        <label class="form-label"><i class="bi bi-camera me-1"></i>Camera snapshot URL</label>
-        <input id="cameraUrl" class="form-control" value="http://192.168.137.88/capture" />
+        <label class="form-label"><i class="bi bi-camera me-1"></i>Camera URL (use /stream for live, /jpg for snapshots)</label>
+        <input id="cameraUrl" class="form-control" value="http://192.168.110.59/jpg" />
+        <div class="mt-2 d-flex align-items-center gap-2">
+          <button id="checkCamBtn" type="button" class="btn btn-outline-secondary btn-sm">Check Camera</button>
+          <span id="diagResult" class="text-muted small"></span>
+        </div>
       </div>
       <div class="col-md-6">
         <label class="form-label">Door</label>
@@ -59,21 +63,80 @@
       const resultEl = document.getElementById('openResult');
       const detailEl = document.getElementById('openDetail');
       const doorSelect = document.getElementById('doorSelect');
+      const checkBtn = document.getElementById('checkCamBtn');
+      const diagEl = document.getElementById('diagResult');
 
       let timer = null;
-      function tick(){
-        const u = urlInput.value || '';
+      let isStreamMode = false;
+      function startPreview(){
+        const u = (urlInput.value || '').trim();
         if(!u) return;
-        img.src = u + (u.includes('?') ? '&' : '?') + 't=' + Date.now();
+        const lower = u.toLowerCase();
+        isStreamMode = lower.includes('/stream');
+        // stop any previous snapshot timer
+        if(timer){ clearInterval(timer); timer = null; }
+        if(isStreamMode){
+          // MJPEG stream works as a persistent <img>
+          img.src = u;
+        } else {
+          // Snapshot polling
+          const tick = ()=>{
+            const base = (urlInput.value || '').trim();
+            if(!base) return;
+            img.src = base + (base.includes('?') ? '&' : '?') + 't=' + Date.now();
+          };
+          tick();
+          timer = setInterval(tick, 1000);
+        }
       }
       img.addEventListener('load', function(){
         if (placeholder) placeholder.style.display = 'none';
         img.style.display = 'inline-block';
       });
+
+      
       img.addEventListener('error', function(){
         img.style.display = 'none';
         if (placeholder) placeholder.style.display = 'flex';
       });
+      // Do not auto-start preview on URL edits; camera should start only after clicking Open Door
+      // Check Camera: run server diag and show a single snapshot inline
+      if (checkBtn) {
+        checkBtn.addEventListener('click', async function(){
+          diagEl.textContent = 'Checking...';
+          // Stop any ongoing preview
+          if (timer) { clearInterval(timer); timer = null; }
+          img.src = '';
+          img.style.display = 'none';
+          if (placeholder) placeholder.style.display = 'flex';
+          isStreamMode = false;
+
+          let base = (urlInput.value || '').trim();
+          if (!base) { diagEl.textContent = 'Enter camera URL'; return; }
+          // Prefer snapshot for diag
+          if (base.toLowerCase().includes('/stream')) {
+            base = base.replace(/\/stream\b/i, '/jpg');
+          }
+          try {
+            const resp = await fetch('/api/camera_diag/?url=' + encodeURIComponent(base));
+            const js = await resp.json();
+            if (!resp.ok || !js.ok) {
+              diagEl.textContent = 'Camera OFF';
+              return;
+            }
+            diagEl.textContent = 'OK';
+            // Show one fresh snapshot without starting polling/stream
+            const snap = js.used || base;
+            img.src = snap + (snap.includes('?') ? '&' : '?') + 't=' + Date.now();
+          } catch(e) {
+            diagEl.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+          }
+        });
+      }
+
+      // Current logged-in user for ESP32 binding
+      const CURRENT_USER = "{{ user.username|default:'' }}";
+
       openBtn.addEventListener('click', function(){
         resultEl.textContent = '';
         detailEl.textContent = '';
@@ -81,23 +144,43 @@
         openBtn.classList.remove('btn-success');
         openBtn.classList.add('btn-secondary');
         openBtn.textContent = 'Verifying...';
-        tick();
-        if(timer) clearInterval(timer);
-        timer = setInterval(tick, 1000);
+        // Pause any preview during verification to free the camera
+        if (timer) { clearInterval(timer); timer = null; }
+        img.src = '';
+        img.style.display = 'none';
+        if (placeholder) placeholder.style.display = 'flex';
+        isStreamMode = false;
+        // Notify ESP32 of the username to bind device-side recognition
+        (function(){
+          try{
+            let base = (urlInput.value || '').trim();
+            if (!base) return;
+            const m = base.match(/^https?:\/\/[^\/]+/i);
+            if (!m) return;
+            const root = m[0];
+            if (CURRENT_USER) {
+              fetch(root + '/api/set_user?username=' + encodeURIComponent(CURRENT_USER), { mode: 'no-cors' }).catch(()=>{});
+            }
+          }catch(_e){}
+        })();
         const doorId = (doorSelect && doorSelect.value ? doorSelect.value : '').toString();
-        fetch('/api/verify_open/', {
+        // Use snapshot for verification (server pull)
+        let camURL = (urlInput.value || '').trim();
+        if (camURL.toLowerCase().includes('/stream')) {
+          camURL = camURL.replace(/\/stream\b/i, '/jpg');
+        }
+        fetch('/api/verify_open_pull/', {
           method: 'POST',
           headers: {
             'X-CSRFToken': getCookie('csrftoken'),
             'Content-Type': 'application/x-www-form-urlencoded',
           },
-          body: new URLSearchParams({ door_id: doorId })
+          body: new URLSearchParams({ door_id: doorId, camera_url: camURL })
         }).then(async (r)=>{
           const txt = await r.text();
           try{ const js = JSON.parse(txt); return {ok:true, js, raw:txt, status:r.status}; }
           catch(e){ return {ok:false, raw:txt, status:r.status}; }
         }).then((res)=>{
-          if(timer) { clearInterval(timer); timer = null; }
           if(!res.ok){
             resultEl.innerHTML = '<span class="badge bg-danger">ERROR</span>';
             detailEl.textContent = 'HTTP '+res.status+' '+(res.raw||'');
@@ -110,14 +193,68 @@
           }
           const data = res.js || {};
           const isOpen = data.ok && data.status === 'OPEN';
-          resultEl.innerHTML = isOpen ? '<span class="badge bg-success">OPEN</span>' : '<span class="badge bg-warning text-dark">DENIED</span>';
+          let badgeHtml = '';
+          if (isOpen) {
+            badgeHtml = '<span class="badge bg-success">OPEN</span>';
+          } else {
+            switch (data.error) {
+              case 'camera_off':
+                badgeHtml = '<span class="badge bg-danger">CAMERA OFF</span>';
+                break;
+              case 'multiple_faces_detected':
+                badgeHtml = '<span class="badge bg-warning text-dark">MULTIPLE FACES</span>';
+                break;
+              case 'no_face_detected':
+                badgeHtml = '<span class="badge bg-warning text-dark">NO FACE</span>';
+                break;
+              case 'face_not_recognized':
+                badgeHtml = '<span class="badge bg-warning text-dark">NOT RECOGNIZED</span>';
+                break;
+              case 'no_access_to_door':
+                badgeHtml = '<span class="badge bg-danger">NO ACCESS</span>';
+                break;
+              default:
+                badgeHtml = '<span class="badge bg-warning text-dark">DENIED</span>';
+            }
+          }
+          resultEl.innerHTML = badgeHtml;
           resultEl.className = 'ms-3 fw-bold align-middle';
+          detailEl.textContent = data.message || '';
+          // After result: if OPEN, trigger motor on ESP32 and start stream; otherwise keep camera OFF
+          if (isOpen) {
+            // Fire-and-forget motor trigger on the ESP32
+            try {
+              let base = (urlInput.value || '').trim();
+              if (!base) base = camURL;
+              const m = base && base.match(/^https?:\/\/[^\/]+/i);
+              if (m) {
+                const root = m[0];
+                fetch(root + '/api/trigger_cycle', { mode: 'no-cors' }).catch(()=>{});
+              }
+            } catch(_e) {}
+            let base = (urlInput.value || '').trim();
+            if (!base) base = camURL; // fallback
+            let streamUrl = base;
+            const lower2 = base.toLowerCase();
+            if (lower2.includes('/jpg')) {
+              streamUrl = base.replace(/\/jpg\b/i, '/stream');
+            } else if (!lower2.includes('/stream')) {
+              streamUrl = base.replace(/\/?$/, '') + '/stream';
+            }
+            urlInput.value = streamUrl;
+            startPreview();
+          }
           openBtn.disabled = false;
           openBtn.classList.remove('btn-secondary');
           openBtn.classList.add(isOpen ? 'btn-success' : 'btn-outline-warning');
           openBtn.textContent = 'Open the Door';
         }).catch((e)=>{
-          if(timer) { clearInterval(timer); timer = null; }
+          // On error: keep camera OFF
+          if (timer) { clearInterval(timer); timer = null; }
+          img.src = '';
+          img.style.display = 'none';
+          if (placeholder) placeholder.style.display = 'flex';
+          isStreamMode = false;
           resultEl.innerHTML = '<span class="badge bg-danger">ERROR</span>';
           resultEl.className = 'ms-3 fw-bold align-middle';
           detailEl.textContent = e && e.message ? e.message : String(e);
@@ -127,6 +264,7 @@
           openBtn.textContent = 'Open the Door';
         });
       });
+      // Do not auto-start preview on load
     </script>
 </div>
 
