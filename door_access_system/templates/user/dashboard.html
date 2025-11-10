@@ -16,7 +16,7 @@
     <div class="row g-3 align-items-end">
       <div class="col-md-6">
         <label class="form-label"><i class="bi bi-camera me-1"></i>Camera URL (use /stream for live, /jpg for snapshots)</label>
-        <input id="cameraUrl" class="form-control" value="http://192.168.110.59/jpg" />
+        <input id="cameraUrl" class="form-control" value="http://192.168.0.123/jpg" />
         <div class="mt-2 d-flex align-items-center gap-2">
           <button id="checkCamBtn" type="button" class="btn btn-outline-secondary btn-sm">Check Camera</button>
           <span id="diagResult" class="text-muted small"></span>
@@ -100,37 +100,21 @@
         if (placeholder) placeholder.style.display = 'flex';
       });
       // Do not auto-start preview on URL edits; camera should start only after clicking Open Door
-      // Check Camera: run server diag and show a single snapshot inline
+      // Check Camera: simple client-side preview (no server fetch)
       if (checkBtn) {
-        checkBtn.addEventListener('click', async function(){
-          diagEl.textContent = 'Checking...';
-          // Stop any ongoing preview
+        checkBtn.addEventListener('click', function(){
+          diagEl.textContent = '';
+          // Stop any ongoing preview, reset image
           if (timer) { clearInterval(timer); timer = null; }
           img.src = '';
           img.style.display = 'none';
           if (placeholder) placeholder.style.display = 'flex';
           isStreamMode = false;
 
-          let base = (urlInput.value || '').trim();
+          const base = (urlInput.value || '').trim();
           if (!base) { diagEl.textContent = 'Enter camera URL'; return; }
-          // Prefer snapshot for diag
-          if (base.toLowerCase().includes('/stream')) {
-            base = base.replace(/\/stream\b/i, '/jpg');
-          }
-          try {
-            const resp = await fetch('/api/camera_diag/?url=' + encodeURIComponent(base));
-            const js = await resp.json();
-            if (!resp.ok || !js.ok) {
-              diagEl.textContent = 'Camera OFF';
-              return;
-            }
-            diagEl.textContent = 'OK';
-            // Show one fresh snapshot without starting polling/stream
-            const snap = js.used || base;
-            img.src = snap + (snap.includes('?') ? '&' : '?') + 't=' + Date.now();
-          } catch(e) {
-            diagEl.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
-          }
+          startPreview();
+          diagEl.textContent = 'OK';
         });
       }
 
@@ -220,18 +204,8 @@
           resultEl.innerHTML = badgeHtml;
           resultEl.className = 'ms-3 fw-bold align-middle';
           detailEl.textContent = data.message || '';
-          // After result: if OPEN, trigger motor on ESP32 and start stream; otherwise keep camera OFF
+          // After result: if OPEN, server has already actuated; just start stream preview; otherwise keep camera OFF
           if (isOpen) {
-            // Fire-and-forget motor trigger on the ESP32
-            try {
-              let base = (urlInput.value || '').trim();
-              if (!base) base = camURL;
-              const m = base && base.match(/^https?:\/\/[^\/]+/i);
-              if (m) {
-                const root = m[0];
-                fetch(root + '/api/trigger_cycle', { mode: 'no-cors' }).catch(()=>{});
-              }
-            } catch(_e) {}
             let base = (urlInput.value || '').trim();
             if (!base) base = camURL; // fallback
             let streamUrl = base;
@@ -268,7 +242,11 @@
     </script>
 </div>
 
-<h5 class="mt-4">Recent Logs</h5>
+<div class="d-flex align-items-center mt-4 mb-2">
+  <h5 class="mb-0">Recent Logs</h5>
+  <a href="{% url 'user_logs' %}" class="ms-auto btn btn-sm btn-outline-primary">View all</a>
+  
+</div>
 <table class="table table-sm">
   <thead><tr><th>Time</th><th>Door</th><th>Status</th></tr></thead>
   <tbody>

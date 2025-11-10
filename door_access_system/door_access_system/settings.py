@@ -9,7 +9,7 @@ DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
 # Comma-separated list in env var ALLOWED_HOSTS, or sensible defaults for local/LAN
 ALLOWED_HOSTS = os.environ.get(
     'ALLOWED_HOSTS',
-    '127.0.0.1,localhost,192.168.110.98'
+    '127.0.0.1,localhost,192.168.0.121'
 ).split(',')
 
 INSTALLED_APPS = [
@@ -95,14 +95,14 @@ LOGOUT_REDIRECT_URL = 'login'
 
 # Face recognition settings
 # Smaller tolerance is stricter. Typical good values: 0.35 - 0.45
-FACE_MATCH_TOLERANCE = float(os.environ.get('FACE_MATCH_TOLERANCE', '0.38'))
+FACE_MATCH_TOLERANCE = float(os.environ.get('FACE_MATCH_TOLERANCE', '0.9'))
 # Enforce exactly one face in frame during verification
 FACE_REQUIRE_SINGLE_FACE = os.environ.get('FACE_REQUIRE_SINGLE_FACE', '1') == '1'
 # 'hog' works on CPU; 'cnn' requires dlib CNN model and more compute
 FACE_DETECTOR_MODEL = os.environ.get('FACE_DETECTOR_MODEL', 'hog')
 # Multi-frame confirmation: capture N frames and require K matches
 FACE_MULTI_FRAME_COUNT = int(os.environ.get('FACE_MULTI_FRAME_COUNT', '3'))
-FACE_MULTI_FRAME_REQUIRED = int(os.environ.get('FACE_MULTI_FRAME_REQUIRED', '2'))
+FACE_MULTI_FRAME_REQUIRED = int(os.environ.get('FACE_MULTI_FRAME_REQUIRED', '1'))
 # Delay between frames in milliseconds
 FACE_MULTI_FRAME_DELAY_MS = int(os.environ.get('FACE_MULTI_FRAME_DELAY_MS', '150'))
 

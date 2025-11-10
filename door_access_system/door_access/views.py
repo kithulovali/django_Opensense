@@ -15,6 +15,7 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from django.core.cache import cache
+from django.core.paginator import Paginator
 
 from .forms import EnrollmentForm, RegistrationForm
 from .models import AccessLog, Door, DoorAccess, FaceProfile
@@ -22,8 +23,9 @@ from .mqtt import send_command
 from .utils.face import encode_image_file, compare_encoding_to_image, detect_face_count
 from .utils.camera import fetch_frame
 import numpy as np
+import base64
 
-ESP32_URL = os.environ.get('ESP32_URL', 'http://192.168.110.59/jpg')
+ESP32_URL = os.environ.get('ESP32_URL', 'http://192.168.0.123/jpg')
 
 
 def is_staff(user):
@@ -52,6 +54,17 @@ def user_dashboard(request):
     logs = AccessLog.objects.filter(user=request.user).order_by('-timestamp')[:20]
     doors = Door.objects.filter(dooraccess__user=request.user, dooraccess__allowed=True).distinct()
     return render(request, 'user/dashboard.html', {'profile': profile, 'logs': logs, 'doors': doors})
+
+
+@login_required
+def user_logs(request):
+    logs_qs = AccessLog.objects.filter(user=request.user).order_by('-timestamp')
+    paginator = Paginator(logs_qs, 25)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+    return render(request, 'user/logs.html', {
+        'page_obj': page_obj,
+    })
 
 
 @login_required
@@ -139,6 +152,8 @@ def api_verify_and_open(request):
         # Prefer snapshot endpoint
         if '/stream' in lower:
             candidates.append(u.lower().replace('/stream', '/jpg'))
+        if '?action=stream' in lower:
+            candidates.append(u.replace('?action=stream', '?action=snapshot'))
         candidates.append(u)
         # Common alternatives
         base = u.rsplit('?', 1)[0]
@@ -146,6 +161,9 @@ def api_verify_and_open(request):
             for alt in ('/jpg', '/capture', '/photo', '/snapshot'):
                 if not base.endswith(alt):
                     candidates.append(base.rstrip('/') + alt)
+        # Query-style alternatives (e.g., mjpg-streamer)
+        if '?action=' in u and 'snapshot' not in lower:
+            candidates.append(u.split('?', 1)[0] + '?action=snapshot')
         # De-dup preserving order
         seen = set()
         ordered = []
@@ -335,8 +353,19 @@ def admin_dashboard(request):
 @user_passes_test(is_staff)
 @require_http_methods(["POST"])
 def api_door_command(request):
-    door_id = int(request.POST.get('door_id', '0'))
-    command = request.POST.get('command', 'OPEN').upper()
+    door_id_str = (request.POST.get('door_id') or '').strip()
+    command = (request.POST.get('command') or '').strip().upper()
+    if not door_id_str.isdigit():
+        return JsonResponse({'error': 'door_id required'}, status=400)
+    if command not in ("OPEN", "CLOSE"):
+        return JsonResponse({'error': 'invalid command'}, status=400)
+    door = get_object_or_404(Door, id=int(door_id_str))
+    send_command(door.id, command)
+    AccessLog.objects.create(user=request.user, door=door, status=command)
+    return JsonResponse({'ok': True, 'status': command})
+
+
+ 
 
 
 @login_required
@@ -378,12 +407,12 @@ def api_camera_diag(request):
         tried.append(u)
         frame = fetch_frame(u, timeout=4.0)
         if frame is not None:
-            return JsonResponse({'ok': True, 'used': u, 'tried': tried[-5:], 'source': source})
+            # Return a base64 data URL so the browser does not contact the device directly
+            ok, buf = cv2.imencode('.jpg', frame)
+            data_url = None
+            if ok:
+                b64 = base64.b64encode(buf.tobytes()).decode('ascii')
+                data_url = f"data:image/jpeg;base64,{b64}"
+            return JsonResponse({'ok': True, 'used': u, 'tried': tried[-5:], 'source': source, 'data_url': data_url})
 
     return JsonResponse({'ok': False, 'error': 'camera_off', 'tried': tried[-5:], 'source': source}, status=503)
-    if command not in ("OPEN", "CLOSE"):
-        return JsonResponse({'error': 'invalid command'}, status=400)
-    door = get_object_or_404(Door, id=door_id)
-    send_command(door.id, command)
-    AccessLog.objects.create(user=request.user, door=door, status=command)
-    return JsonResponse({'ok': True, 'status': command})
